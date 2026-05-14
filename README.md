@@ -1,6 +1,7 @@
 # Hill Country Appliance Repair Website
-
 Modernized website for Hill Country Appliance Repair.
+
+**Repository:** [https://github.com/github-kbaker/hill-country-app.git](https://github.com/github-kbaker/hill-country-app.git)
 
 ## Tech Stack
 - Next.js (App Router)
@@ -10,8 +11,7 @@ Modernized website for Hill Country Appliance Repair.
 - Nodemailer (Emails)
 
 ## Getting Started
-
-1. Clone the repository.
+1. Clone the repository: `git clone https://github.com/github-kbaker/hill-country-app.git`
 2. Copy `.env.local.example` (see `/home/team/shared/env_template.md`) to `.env.local` and fill in the values.
 3. Install dependencies: `npm install`
 4. Run the development server: `npm run dev`
