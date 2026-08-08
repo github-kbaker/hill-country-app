@@ -20,7 +20,7 @@ export async function POST(req: Request) {
 
     // Persist to database
     try {
-      query(`INSERT INTO app_repair_requests (name, email, phone, address, appliance_type, brand, model, description, preferred_date, preferred_time) VALUES (${escape(name)}, ${escape(email)}, ${escape(phone)}, ${escape(address)}, ${escape(applianceType)}, ${escape(brand)}, ${escape(model)}, ${escape(description)}, ${escape(preferredDate)}, ${escape(preferredTime)})`);
+      await query(`INSERT INTO app_repair_requests (name, email, phone, address, appliance_type, brand, model, description, preferred_date, preferred_time) VALUES (${escape(name)}, ${escape(email)}, ${escape(phone)}, ${escape(address)}, ${escape(applianceType)}, ${escape(brand)}, ${escape(model)}, ${escape(description)}, ${escape(preferredDate)}, ${escape(preferredTime)})`);
     } catch (dbError) {
       console.error('Failed to persist repair request:', dbError);
       // We continue even if DB fails, as email is the primary notification for now

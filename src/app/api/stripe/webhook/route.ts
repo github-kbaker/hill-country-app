@@ -28,7 +28,7 @@ export async function POST(req: Request) {
       console.log(`Payment successful for Invoice: ${session.metadata?.invoiceNumber}`);
       // Legacy payment record — preserved unchanged.
       try {
-        query(`INSERT INTO app_payments (invoice_number, customer_name, customer_email, amount, currency, stripe_session_id, status) VALUES (${escape(session.metadata?.invoiceNumber)}, ${escape(session.customer_details?.name)}, ${escape(session.customer_details?.email)}, ${session.amount_total}, ${escape(session.currency)}, ${escape(session.id)}, 'paid')`);
+        await query(`INSERT INTO app_payments (invoice_number, customer_name, customer_email, amount, currency, stripe_session_id, status) VALUES (${escape(session.metadata?.invoiceNumber)}, ${escape(session.customer_details?.name)}, ${escape(session.customer_details?.email)}, ${session.amount_total}, ${escape(session.currency)}, ${escape(session.id)}, 'paid')`);
       } catch (dbError) {
         console.error('Failed to persist legacy payment:', dbError);
       }

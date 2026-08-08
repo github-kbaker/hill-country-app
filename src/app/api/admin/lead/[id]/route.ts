@@ -16,8 +16,8 @@ export const dynamic = 'force-dynamic';
 
 const VALID_STATUSES: LeadStatus[] = ['pending', 'scheduled', 'completed', 'cancelled'];
 
-function getLead(id: number): Lead | null {
-  const rows = query(`SELECT * FROM app_repair_requests WHERE id = ${id}`);
+async function getLead(id: number): Promise<Lead | null> {
+  const rows = await query(`SELECT * FROM app_repair_requests WHERE id = ${id}`);
   return (rows as Lead[])[0] ?? null;
 }
 
@@ -30,28 +30,28 @@ export async function GET(
   if (!Number.isInteger(id) || id <= 0) {
     return NextResponse.json({ error: 'Invalid lead id' }, { status: 400 });
   }
-  const lead = getLead(id);
+  const lead = await getLead(id);
   if (!lead) {
     return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
   }
 
   const data: LeadDetailData = {
     lead,
-    payments: query(
+    payments: (await query(
       `SELECT * FROM app_payments WHERE invoice_number IN (SELECT invoice_number FROM app_final_invoices WHERE request_id = ${id}) ORDER BY created_at DESC`
-    ) as PaymentRow[],
-    notifications: query(
+    )) as PaymentRow[],
+    notifications: (await query(
       `SELECT * FROM app_schedule_notifications WHERE request_id = ${id} ORDER BY sent_at DESC, id DESC`
-    ) as NotificationRow[],
-    activities: query(
+    )) as NotificationRow[],
+    activities: (await query(
       `SELECT * FROM app_lead_activities WHERE request_id = ${id} ORDER BY id DESC`
-    ) as ActivityRow[],
-    invoice: (query(
+    )) as ActivityRow[],
+    invoice: ((await query(
       `SELECT * FROM app_final_invoices WHERE request_id = ${id} ORDER BY id DESC LIMIT 1`
-    ) as FinalInvoice[])[0] ?? null,
-    invoicePayments: query(
+    )) as FinalInvoice[])[0] ?? null,
+    invoicePayments: (await query(
       `SELECT * FROM app_invoice_payments WHERE request_id = ${id} ORDER BY id DESC`
-    ) as InvoicePaymentRow[],
+    )) as InvoicePaymentRow[],
   };
 
   return NextResponse.json(data);
@@ -77,7 +77,7 @@ export async function PATCH(
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const lead = getLead(id);
+  const lead = await getLead(id);
   if (!lead) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
 
   // Status change (Mark Scheduled / Mark Completed / Cancel) — NEVER emails.
@@ -107,11 +107,11 @@ export async function PATCH(
       detail = 'Lead marked scheduled';
     }
 
-    query(`UPDATE app_repair_requests SET ${sets.join(', ')} WHERE id = ${id}`);
-    query(
+    await query(`UPDATE app_repair_requests SET ${sets.join(', ')} WHERE id = ${id}`);
+    await query(
       `INSERT INTO app_lead_activities (request_id, action, detail) VALUES (${id}, ${escape(action)}, ${escape(detail)})`
     );
-    return NextResponse.json({ ok: true, lead: getLead(id) });
+    return NextResponse.json({ ok: true, lead: await getLead(id) });
   }
 
   // Schedule persistence (Save Schedule) — NEVER emails.
@@ -128,13 +128,13 @@ export async function PATCH(
       return NextResponse.json({ error: 'scheduled_time must be a time slot like 8:00 AM' }, { status: 400 });
     }
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-    query(
+    await query(
       `UPDATE app_repair_requests SET scheduled_date = ${escape(date)}, scheduled_time = ${escape(time)}, updated_at = ${escape(now)} WHERE id = ${id}`
     );
-    query(
+    await query(
       `INSERT INTO app_lead_activities (request_id, action, detail) VALUES (${id}, 'schedule_saved', ${escape(`Schedule set to ${date} at ${time}`)})`
     );
-    return NextResponse.json({ ok: true, lead: getLead(id) });
+    return NextResponse.json({ ok: true, lead: await getLead(id) });
   }
 
   return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });

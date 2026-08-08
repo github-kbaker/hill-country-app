@@ -20,23 +20,23 @@ export const dynamic = 'force-dynamic';
 const VALID_METHODS: PaymentMethod[] = ['stripe', 'paypal'];
 const VALID_RECORD_METHODS: InvoicePaymentMethod[] = ['stripe', 'paypal', 'manual'];
 
-function getLead(id: number): Lead | null {
-  const rows = query(`SELECT * FROM app_repair_requests WHERE id = ${id}`);
+async function getLead(id: number): Promise<Lead | null> {
+  const rows = await query(`SELECT * FROM app_repair_requests WHERE id = ${id}`);
   return (rows as Lead[])[0] ?? null;
 }
 
-function getInvoice(id: number): FinalInvoice | null {
-  const rows = query(`SELECT * FROM app_final_invoices WHERE id = ${id}`);
+async function getInvoice(id: number): Promise<FinalInvoice | null> {
+  const rows = await query(`SELECT * FROM app_final_invoices WHERE id = ${id}`);
   return (rows as FinalInvoice[])[0] ?? null;
 }
 
-function getInvoiceForRequest(requestId: number): FinalInvoice | null {
-  const rows = query(`SELECT * FROM app_final_invoices WHERE request_id = ${requestId} ORDER BY id DESC LIMIT 1`);
+async function getInvoiceForRequest(requestId: number): Promise<FinalInvoice | null> {
+  const rows = await query(`SELECT * FROM app_final_invoices WHERE request_id = ${requestId} ORDER BY id DESC LIMIT 1`);
   return (rows as FinalInvoice[])[0] ?? null;
 }
 
-function getInvoicePayments(invoiceId: number): InvoicePaymentRow[] {
-  return query(`SELECT * FROM app_invoice_payments WHERE invoice_id = ${invoiceId} ORDER BY id DESC`) as InvoicePaymentRow[];
+async function getInvoicePayments(invoiceId: number): Promise<InvoicePaymentRow[]> {
+  return (await query(`SELECT * FROM app_invoice_payments WHERE invoice_id = ${invoiceId} ORDER BY id DESC`)) as InvoicePaymentRow[];
 }
 
 /**
@@ -45,10 +45,10 @@ function getInvoicePayments(invoiceId: number): InvoicePaymentRow[] {
  * and the projection (app_final_invoices) so every creation path advances the
  * same sequence and the two tables can never diverge or duplicate numbers.
  */
-function nextInvoiceNumber(): string {
+async function nextInvoiceNumber(): Promise<string> {
   const year = new Date().getFullYear();
-  const canonical = query('SELECT invoice_number FROM app_invoices') as Array<{ invoice_number: string }>;
-  const projection = query('SELECT invoice_number FROM app_final_invoices') as Array<{ invoice_number: string }>;
+  const canonical = (await query('SELECT invoice_number FROM app_invoices')) as Array<{ invoice_number: string }>;
+  const projection = (await query('SELECT invoice_number FROM app_final_invoices')) as Array<{ invoice_number: string }>;
   const maxSeq = [...canonical, ...projection].reduce((max, row) => {
     const parsed = parseInvoiceNumber(row.invoice_number);
     return parsed && parsed.year === year && parsed.seq > max ? parsed.seq : max;
@@ -56,15 +56,15 @@ function nextInvoiceNumber(): string {
   return formatInvoiceNumber(year, maxSeq + 1);
 }
 
-function logActivity(requestId: number, action: string, detail: string) {
-  query(
+async function logActivity(requestId: number, action: string, detail: string): Promise<void> {
+  await query(
     `INSERT INTO app_lead_activities (request_id, action, detail) VALUES (${requestId}, ${escape(action)}, ${escape(detail)})`
   );
 }
 
-function recordNotification(requestId: number, type: string, recipientEmail: string, status: string, error: string | null) {
+async function recordNotification(requestId: number, type: string, recipientEmail: string, status: string, error: string | null): Promise<void> {
   const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-  query(
+  await query(
     `INSERT INTO app_schedule_notifications (request_id, type, recipient_email, status, error, sent_at) VALUES (${requestId}, ${escape(type)}, ${escape(recipientEmail)}, ${escape(status)}, ${escape(error)}, ${escape(now)})`
   );
 }
@@ -89,10 +89,10 @@ export async function POST(
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
   const action = typeof body.action === 'string' ? body.action : '';
-  const lead = getLead(id);
+  const lead = await getLead(id);
   if (!lead) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
 
-  const invoice = getInvoiceForRequest(id);
+  const invoice = await getInvoiceForRequest(id);
 
   /* ------------------------------------------------------------ */
   /* GENERATE — draft only, never emailed                          */
@@ -115,13 +115,13 @@ export async function POST(
     }
     const dueDate = typeof body.dueDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.dueDate) ? body.dueDate : '';
     const notes = typeof body.notes === 'string' ? body.notes.trim() : '';
-    const invoiceNumber = nextInvoiceNumber();
+    const invoiceNumber = await nextInvoiceNumber();
     const paySuffix = `invoice=${encodeURIComponent(invoiceNumber)}`;
-    const inserted = query(
+    const inserted = (await query(
       `INSERT INTO app_final_invoices (request_id, invoice_number, amount_cents, status, payment_methods, due_date, pay_link_stripe, pay_link_paypal, notes) VALUES (${id}, ${escape(invoiceNumber)}, ${amountCents}, 'draft', ${escape(methods.join(','))}, ${escape(dueDate)}, ${escape(`/pay?${paySuffix}&method=stripe`)}, ${escape(`/pay?${paySuffix}&method=paypal`)}, ${escape(notes)}) RETURNING *`
-    ) as FinalInvoice[];
+    )) as FinalInvoice[];
     const created = inserted[0];
-    logActivity(id, 'invoice_generated', `Final invoice ${invoiceNumber} generated for $${(amountCents / 100).toFixed(2)} (no email sent)`);
+    await logActivity(id, 'invoice_generated', `Final invoice ${invoiceNumber} generated for ${(amountCents / 100).toFixed(2)} (no email sent)`);
     return NextResponse.json({ ok: true, invoice: created, payments: [], paidCents: 0, balanceCents: amountCents });
   }
 
@@ -134,7 +134,7 @@ export async function POST(
   /* ------------------------------------------------------------ */
   if (action === 'preview') {
     const kind = body.kind === 'receipt' ? 'receipt' : 'invoice';
-    const { totalCents, paidCents, balanceCents } = invoiceTotals(invoice, getInvoicePayments(invoice.id));
+    const { totalCents, paidCents, balanceCents } = invoiceTotals(invoice, await getInvoicePayments(invoice.id));
     const content =
       kind === 'receipt'
         ? renderReceiptEmail({ customerName: lead.name, invoiceNumber: invoice.invoice_number, totalCents, paidCents, balanceCents })
@@ -151,11 +151,11 @@ export async function POST(
     if (methods.length === 0) {
       return NextResponse.json({ error: 'At least one payment method (stripe, paypal) is required' }, { status: 400 });
     }
-    query(
+    await query(
       `UPDATE app_final_invoices SET payment_methods = ${escape(methods.join(','))}, updated_at = datetime('now') WHERE id = ${invoice.id}`
     );
-    logActivity(id, 'invoice_methods_updated', `Payment methods set to: ${methods.join(', ')}`);
-    return NextResponse.json({ ok: true, invoice: getInvoice(invoice.id) });
+    await logActivity(id, 'invoice_methods_updated', `Payment methods set to: ${methods.join(', ')}`);
+    return NextResponse.json({ ok: true, invoice: await getInvoice(invoice.id) });
   }
 
   /* ------------------------------------------------------------ */
@@ -163,7 +163,7 @@ export async function POST(
   /* ------------------------------------------------------------ */
   if (action === 'send') {
     if (!lead.email) return NextResponse.json({ error: 'Lead has no email address' }, { status: 400 });
-    const { totalCents, paidCents, balanceCents } = invoiceTotals(invoice, getInvoicePayments(invoice.id));
+    const { totalCents, paidCents, balanceCents } = invoiceTotals(invoice, await getInvoicePayments(invoice.id));
     const content = renderFinalInvoiceEmail({
       customerName: lead.name,
       invoiceNumber: invoice.invoice_number,
@@ -197,12 +197,12 @@ export async function POST(
     if (status !== 'failed') {
       // Canonical status: draft → final_invoice_sent (partial payments keep
       // final_invoice_sent with a balance; never flips to paid on send).
-      query(
+      await query(
         `UPDATE app_final_invoices SET status = 'final_invoice_sent', sent_at = datetime('now'), updated_at = datetime('now') WHERE id = ${invoice.id}`
       );
     }
-    recordNotification(id, 'final_invoice', lead.email, status, error);
-    logActivity(
+    await recordNotification(id, 'final_invoice', lead.email, status, error);
+    await logActivity(
       id,
       status === 'dry_run' ? 'invoice_email_dry_run' : status === 'failed' ? 'invoice_email_failed' : 'invoice_sent',
       `Final invoice ${invoice.invoice_number} → ${lead.email}${error ? ` (${error})` : ''}`
@@ -210,7 +210,7 @@ export async function POST(
     if (status === 'failed') {
       return NextResponse.json({ ok: false, dryRun: false, error }, { status: 502 });
     }
-    return NextResponse.json({ ok: true, dryRun: status === 'dry_run', invoice: getInvoice(invoice.id) });
+    return NextResponse.json({ ok: true, dryRun: status === 'dry_run', invoice: await getInvoice(invoice.id) });
   }
 
   /* ------------------------------------------------------------ */
@@ -230,24 +230,24 @@ export async function POST(
       return NextResponse.json({ error: `Invalid payment method '${method}'` }, { status: 400 });
     }
     const reference = typeof body.reference === 'string' ? body.reference.trim() : '';
-    const { totalCents } = invoiceTotals(invoice, getInvoicePayments(invoice.id));
+    const { totalCents } = invoiceTotals(invoice, await getInvoicePayments(invoice.id));
     if (amountCents > totalCents) {
       return NextResponse.json({ error: 'Payment exceeds the invoice total' }, { status: 400 });
     }
-    const inserted = query(
+    const inserted = (await query(
       `INSERT INTO app_invoice_payments (invoice_id, request_id, amount_cents, method, reference, status) VALUES (${invoice.id}, ${id}, ${amountCents}, ${escape(method)}, ${escape(reference)}, 'recorded') RETURNING *`
-    ) as InvoicePaymentRow[];
-    const payments = getInvoicePayments(invoice.id);
+    )) as InvoicePaymentRow[];
+    const payments = await getInvoicePayments(invoice.id);
     const paidCents = payments.reduce((acc, p) => acc + p.amount_cents, 0);
     const fullyCovered = paidCents >= totalCents;
     // Recorded payments never flip the invoice to 'invoice_paid'; the admin
     // must verify the payment against the ledger (Stripe/PayPal/bank) and use
     // mark_paid. Status stays 'draft' until sent, then 'final_invoice_sent'
     // while a balance remains — matching the canonical invoice vocabulary.
-    logActivity(id, 'payment_recorded', `Payment of $${(amountCents / 100).toFixed(2)} recorded via ${method}${reference ? ` (ref ${reference})` : ''} — awaiting ledger confirmation`);
+    await logActivity(id, 'payment_recorded', `Payment of ${(amountCents / 100).toFixed(2)} recorded via ${method}${reference ? ` (ref ${reference})` : ''} — awaiting ledger confirmation`);
     return NextResponse.json({
       ok: true,
-      invoice: getInvoice(invoice.id),
+      invoice: await getInvoice(invoice.id),
       payments,
       paidCents,
       balanceCents: Math.max(totalCents - paidCents, 0),
@@ -263,7 +263,7 @@ export async function POST(
   if (action === 'mark_paid') {
     const ledgerConfirmed = body.ledgerConfirmed === true;
     const ledgerReference = typeof body.ledgerReference === 'string' ? body.ledgerReference.trim() : '';
-    const payments = getInvoicePayments(invoice.id);
+    const payments = await getInvoicePayments(invoice.id);
     const { totalCents } = invoiceTotals(invoice, payments);
     if (!ledgerConfirmed) {
       return NextResponse.json({ error: 'Ledger confirmation is required before marking the invoice paid' }, { status: 400 });
@@ -278,17 +278,17 @@ export async function POST(
       );
     }
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-    query(
+    await query(
       `UPDATE app_invoice_payments SET status = 'confirmed', ledger_confirmed = 1, confirmed_at = ${escape(now)} WHERE invoice_id = ${invoice.id}`
     );
-    query(
+    await query(
       `UPDATE app_final_invoices SET status = 'invoice_paid', updated_at = ${escape(now)} WHERE id = ${invoice.id}`
     );
-    logActivity(id, 'invoice_paid', `Invoice ${invoice.invoice_number} marked paid — ledger ref ${ledgerReference} verified`);
+    await logActivity(id, 'invoice_paid', `Invoice ${invoice.invoice_number} marked paid — ledger ref ${ledgerReference} verified`);
     return NextResponse.json({
       ok: true,
-      invoice: getInvoice(invoice.id),
-      payments: getInvoicePayments(invoice.id),
+      invoice: await getInvoice(invoice.id),
+      payments: await getInvoicePayments(invoice.id),
       paidCents: totalCents,
       balanceCents: 0,
     });
@@ -302,7 +302,7 @@ export async function POST(
       return NextResponse.json({ error: 'Receipts can only be sent after a payment is recorded' }, { status: 400 });
     }
     if (!lead.email) return NextResponse.json({ error: 'Lead has no email address' }, { status: 400 });
-    const { totalCents, paidCents, balanceCents } = invoiceTotals(invoice, getInvoicePayments(invoice.id));
+    const { totalCents, paidCents, balanceCents } = invoiceTotals(invoice, await getInvoicePayments(invoice.id));
     const content = renderReceiptEmail({ customerName: lead.name, invoiceNumber: invoice.invoice_number, totalCents, paidCents, balanceCents });
     const dryRun = process.env.EMAIL_DRY_RUN === 'true';
     const transportReady =
@@ -322,8 +322,8 @@ export async function POST(
         error = err instanceof Error ? err.message : String(err);
       }
     }
-    recordNotification(id, 'receipt', lead.email, status, error);
-    logActivity(id, status === 'dry_run' ? 'receipt_email_dry_run' : status === 'failed' ? 'receipt_email_failed' : 'receipt_sent', `Receipt for ${invoice.invoice_number} → ${lead.email}${error ? ` (${error})` : ''}`);
+    await recordNotification(id, 'receipt', lead.email, status, error);
+    await logActivity(id, status === 'dry_run' ? 'receipt_email_dry_run' : status === 'failed' ? 'receipt_email_failed' : 'receipt_sent', `Receipt for ${invoice.invoice_number} → ${lead.email}${error ? ` (${error})` : ''}`);
     if (status === 'failed') return NextResponse.json({ ok: false, dryRun: false, error }, { status: 502 });
     return NextResponse.json({ ok: true, dryRun: status === 'dry_run' });
   }

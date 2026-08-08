@@ -40,9 +40,9 @@ export async function GET(req: Request) {
     const id = url.searchParams.get('id');
     const service = new InvoiceService({ db: { query } });
     if (id) {
-      return NextResponse.json({ invoice: service.get(Number(id)) });
+      return NextResponse.json({ invoice: await service.get(Number(id)) });
     }
-    const invoices = service.list().map((i) => service.get(i.id));
+    const invoices = await Promise.all((await service.list()).map((i) => service.get(i.id)));
     const summary = {
       total: invoices.length,
       final_sent: invoices.filter((i) => i.status === 'final_invoice_sent').length,
@@ -64,7 +64,7 @@ export async function POST(req: Request) {
 
     if (body?.action === 'create') {
       const parsed = createSchema.parse(body);
-      const invoice = service.create({
+      const invoice = await service.create({
         requestId: parsed.requestId ?? null,
         subtotalCents: parsed.subtotalCents,
         discountCents: parsed.discountCents ?? 0,
@@ -99,7 +99,7 @@ export async function POST(req: Request) {
 
     if (body?.action === 'release-payout') {
       const parsed = releasePayoutSchema.parse(body);
-      const invoice = service.releasePayout(parsed.invoiceId, { force: parsed.force });
+      const invoice = await service.releasePayout(parsed.invoiceId, { force: parsed.force });
       return NextResponse.json({ invoice });
     }
 

@@ -17,7 +17,7 @@ export async function GET(req: Request) {
   }
   try {
     const service = new InvoiceService({ db: { query } });
-    const invoice = service.findPublicByNumber(invoiceNumber);
+    const invoice = await service.findPublicByNumber(invoiceNumber);
     if (!invoice) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
     return NextResponse.json({
       invoiceNumber: invoice.invoice_number,

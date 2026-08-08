@@ -97,7 +97,7 @@ export async function POST(
     return NextResponse.json({ error: `Invalid notification type '${type}'` }, { status: 400 });
   }
 
-  const rows = query(`SELECT * FROM app_repair_requests WHERE id = ${id}`) as Lead[];
+  const rows = (await query(`SELECT * FROM app_repair_requests WHERE id = ${id}`)) as Lead[];
   const lead = rows[0];
   if (!lead) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
 
@@ -161,12 +161,12 @@ export async function POST(
   }
 
   const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-  const inserted = query(
+  const inserted = (await query(
     `INSERT INTO app_schedule_notifications (request_id, type, recipient_email, status, error, sent_at) VALUES (${id}, ${escape(type)}, ${escape(lead.email)}, ${escape(status)}, ${escape(error)}, ${escape(now)}) RETURNING *`
-  ) as Array<{ id: number; type: string; recipient_email: string | null; status: string; error: string | null; sent_at: string | null }>;
+  )) as Array<{ id: number; type: string; recipient_email: string | null; status: string; error: string | null; sent_at: string | null }>;
   const notification = inserted[0];
 
-  query(
+  await query(
     `INSERT INTO app_lead_activities (request_id, action, detail) VALUES (${id}, ${escape(status === 'dry_run' ? 'email_dry_run' : status === 'failed' ? 'email_failed' : 'email_sent')}, ${escape(`${type} → ${lead.email}${error ? ` (${error})` : ''}${messageId ? ` (${messageId})` : ''}`)})`
   );
 

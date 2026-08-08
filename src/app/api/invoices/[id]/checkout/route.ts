@@ -12,7 +12,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const service = new InvoiceService({ db: { query } });
     let invoice;
     try {
-      invoice = service.get(Number(id));
+      invoice = await service.get(Number(id));
     } catch {
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
     }

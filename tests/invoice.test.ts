@@ -83,10 +83,10 @@ describe('stable invoice numbering', () => {
 });
 
 describe('InvoiceService — lifecycle', () => {
-  test('create → draft with computed totals and stable number; projection synced', () => {
+  test('create → draft with computed totals and stable number; projection synced', async () => {
     const db = new FakeDb(seedLeads());
     const svc = service(db);
-    const inv = svc.create({ requestId: 1, subtotalCents: 35000, discountCents: 7500, discountReason: 'Returning customer', dueDate: '2026-08-15' });
+    const inv = await svc.create({ requestId: 1, subtotalCents: 35000, discountCents: 7500, discountReason: 'Returning customer', dueDate: '2026-08-15' });
     expect(inv.invoice_number).toBe('HCSC-2026-000001');
     expect(inv.status).toBe('draft');
     expect(inv.total_cents).toBe(27500);
@@ -100,11 +100,11 @@ describe('InvoiceService — lifecycle', () => {
     expect(projection[0].amount_cents).toBe(27500);
   });
 
-  test('sequential creates get sequential numbers; canonical ledger and projection NEVER diverge', () => {
+  test('sequential creates get sequential numbers; canonical ledger and projection NEVER diverge', async () => {
     const db = new FakeDb(seedLeads());
     const svc = service(db);
-    svc.create({ requestId: 1, subtotalCents: 10000 });
-    const second = svc.create({ requestId: 2, subtotalCents: 20000 });
+    await svc.create({ requestId: 1, subtotalCents: 10000 });
+    const second = await svc.create({ requestId: 2, subtotalCents: 20000 });
     expect(second.invoice_number).toBe('HCSC-2026-000002');
     // Divergence guard: the projection must mirror the canonical ledger exactly
     // (same numbers, same count) — numbers are only generated on app_invoices.
@@ -118,7 +118,7 @@ describe('InvoiceService — lifecycle', () => {
     const db = new FakeDb(seedLeads());
     const { sent, transport } = mockTransport();
     const svc = service(db, { transport });
-    const inv = svc.create({ requestId: 1, subtotalCents: 35000, discountCents: 7500, customerName: 'Michonne' });
+    const inv = await svc.create({ requestId: 1, subtotalCents: 35000, discountCents: 7500, customerName: 'Michonne' });
     // Even if the caller supplies a different email, the stored lead wins.
     const result = await svc.send(inv.id);
     expect(result.invoice.status).toBe('final_invoice_sent');
@@ -138,7 +138,7 @@ describe('InvoiceService — lifecycle', () => {
   test('email failure is non-fatal: status persists, notification marked failed', async () => {
     const db = new FakeDb(seedLeads());
     const svc = service(db, { transport: failingTransport() });
-    const inv = svc.create({ requestId: 1, subtotalCents: 27500 });
+    const inv = await svc.create({ requestId: 1, subtotalCents: 27500 });
     const result = await svc.send(inv.id);
     expect(result.invoice.status).toBe('final_invoice_sent');
     expect(result.emailStatus).toBe('failed');
@@ -151,7 +151,7 @@ describe('InvoiceService — lifecycle', () => {
     const db = new FakeDb(seedLeads());
     const { sent, transport } = mockTransport();
     const svc = service(db, { transport, dryRun: true });
-    const inv = svc.create({ requestId: 1, subtotalCents: 27500 });
+    const inv = await svc.create({ requestId: 1, subtotalCents: 27500 });
     const result = await svc.send(inv.id);
     expect(result.emailStatus).toBe('dry_run');
     expect(sent.length).toBe(0);
@@ -162,9 +162,9 @@ describe('InvoiceService — lifecycle', () => {
     const db = new FakeDb(seedLeads());
     const { transport } = mockTransport();
     const svc = service(db, { transport });
-    const inv = svc.create({ subtotalCents: 27500, customerName: 'Walk-in', customerEmail: 'walkin@example.com' });
+    const inv = await svc.create({ subtotalCents: 27500, customerName: 'Walk-in', customerEmail: 'walkin@example.com' });
     await svc.send(inv.id);
-    expect(svc.get(inv.id).notifications[0].recipient_email).toBe('walkin@example.com');
+    expect((await svc.get(inv.id)).notifications[0].recipient_email).toBe('walkin@example.com');
   });
 });
 
@@ -173,7 +173,7 @@ describe('InvoiceService — payments, idempotency, payout safeguard', () => {
     const db = new FakeDb(seedLeads());
     const { sent, transport } = mockTransport();
     const svc = service(db, { transport });
-    const inv = svc.create({ requestId: 1, subtotalCents: 35000, discountCents: 7500 });
+    const inv = await svc.create({ requestId: 1, subtotalCents: 35000, discountCents: 7500 });
     await svc.send(inv.id);
     sent.length = 0;
 
@@ -215,7 +215,7 @@ describe('InvoiceService — payments, idempotency, payout safeguard', () => {
   test('idempotency: same provider event id never double-applies', async () => {
     const db = new FakeDb(seedLeads());
     const svc = service(db, { transport: mockTransport().transport, dryRun: true });
-    const inv = svc.create({ requestId: 1, subtotalCents: 27500 });
+    const inv = await svc.create({ requestId: 1, subtotalCents: 27500 });
     const payment = {
       providerEventId: 'evt_paypal_9',
       provider: 'paypal' as const,
@@ -231,14 +231,14 @@ describe('InvoiceService — payments, idempotency, payout safeguard', () => {
     expect(first.applied).toBe(true);
     expect(second.applied).toBe(false);
     expect(db.count('app_invoice_payments')).toBe(1);
-    expect(svc.get(inv.id).paid_cents).toBe(27500);
-    expect(svc.get(inv.id).balance_cents).toBe(0);
+    expect((await svc.get(inv.id)).paid_cents).toBe(27500);
+    expect((await svc.get(inv.id)).balance_cents).toBe(0);
   });
 
   test('partial payments: $75 then $200 → paid after second, balances always correct', async () => {
     const db = new FakeDb(seedLeads());
     const svc = service(db, { transport: mockTransport().transport, dryRun: true });
-    const inv = svc.create({ requestId: 1, subtotalCents: 35000, discountCents: 7500 });
+    const inv = await svc.create({ requestId: 1, subtotalCents: 35000, discountCents: 7500 });
     await svc.send(inv.id);
     const first = await svc.applyPayment(inv.id, {
       providerEventId: 'evt_p1',
@@ -262,7 +262,7 @@ describe('InvoiceService — payments, idempotency, payout safeguard', () => {
   test('overpayment is clamped to the remaining balance', async () => {
     const db = new FakeDb(seedLeads());
     const svc = service(db, { transport: mockTransport().transport, dryRun: true });
-    const inv = svc.create({ requestId: 1, subtotalCents: 10000 });
+    const inv = await svc.create({ requestId: 1, subtotalCents: 10000 });
     const result = await svc.applyPayment(inv.id, {
       providerEventId: 'evt_overpay', provider: 'stripe', amountCents: 99999, currency: 'USD', status: 'completed', paymentMethod: 'card', invoiceId: inv.id,
     });
@@ -273,7 +273,7 @@ describe('InvoiceService — payments, idempotency, payout safeguard', () => {
   test('manual payment records provider=manual with idempotency key', async () => {
     const db = new FakeDb(seedLeads());
     const svc = service(db, { transport: mockTransport().transport, dryRun: true });
-    const inv = svc.create({ requestId: 1, subtotalCents: 27500 });
+    const inv = await svc.create({ requestId: 1, subtotalCents: 27500 });
     const first = await svc.recordManualPayment({ invoiceId: inv.id, amountCents: 27500, method: 'check', reference: 'CHK-1042', idempotencyKey: 'manual-key-1' });
     const second = await svc.recordManualPayment({ invoiceId: inv.id, amountCents: 27500, method: 'check', reference: 'CHK-1042', idempotencyKey: 'manual-key-1' });
     expect(first.applied).toBe(true);
@@ -286,20 +286,20 @@ describe('InvoiceService — payments, idempotency, payout safeguard', () => {
   test('payout safeguard: held until paid, released on full payment, force overrides', async () => {
     const db = new FakeDb(seedLeads());
     const svc = service(db, { transport: mockTransport().transport, dryRun: true });
-    const inv = svc.create({ requestId: 1, subtotalCents: 27500 });
-    expect(() => svc.releasePayout(inv.id)).toThrow(/held/i);
-    const forced = svc.releasePayout(inv.id, { force: true });
+    const inv = await svc.create({ requestId: 1, subtotalCents: 27500 });
+    await expect(svc.releasePayout(inv.id)).rejects.toThrow(/held/i);
+    const forced = await svc.releasePayout(inv.id, { force: true });
     expect(forced.payout_status).toBe('released');
     // A fresh invoice: payout released automatically when paid in full.
-    const inv2 = svc.create({ requestId: 2, subtotalCents: 5000 });
+    const inv2 = await svc.create({ requestId: 2, subtotalCents: 5000 });
     await svc.applyPayment(inv2.id, { providerEventId: 'evt_5', provider: 'stripe', amountCents: 5000, currency: 'USD', status: 'completed', paymentMethod: 'card', invoiceId: inv2.id });
-    expect(svc.get(inv2.id).payout_status).toBe('released');
+    expect((await svc.get(inv2.id)).payout_status).toBe('released');
   });
 
   test('cancelled/paid invoice refuses further payments', async () => {
     const db = new FakeDb(seedLeads());
     const svc = service(db, { transport: mockTransport().transport, dryRun: true });
-    const inv = svc.create({ requestId: 1, subtotalCents: 27500 });
+    const inv = await svc.create({ requestId: 1, subtotalCents: 27500 });
     await svc.applyPayment(inv.id, { providerEventId: 'evt_6', provider: 'stripe', amountCents: 27500, currency: 'USD', status: 'completed', paymentMethod: 'card', invoiceId: inv.id });
     await expect(
       svc.applyPayment(inv.id, { providerEventId: 'evt_7', provider: 'stripe', amountCents: 100, currency: 'USD', status: 'completed', paymentMethod: 'card', invoiceId: inv.id }),
@@ -309,30 +309,30 @@ describe('InvoiceService — payments, idempotency, payout safeguard', () => {
   test('get() returns payments, events, notifications', async () => {
     const db = new FakeDb(seedLeads());
     const svc = service(db, { transport: mockTransport().transport, dryRun: true });
-    const inv = svc.create({ requestId: 1, subtotalCents: 35000, discountCents: 7500 });
+    const inv = await svc.create({ requestId: 1, subtotalCents: 35000, discountCents: 7500 });
     await svc.applyPayment(inv.id, { providerEventId: 'evt_8', provider: 'stripe', amountCents: 27500, currency: 'USD', status: 'completed', paymentMethod: 'card', invoiceId: inv.id });
-    const detail = svc.get(inv.id);
+    const detail = await svc.get(inv.id);
     expect(detail.payments.length).toBe(1);
     expect(detail.events.length).toBeGreaterThanOrEqual(3);
     expect(detail.notifications.length).toBe(1);
     expect(detail.request?.email).toBe('mbaker789@gmail.com');
   });
 
-  test('list() returns all invoices newest first', () => {
+  test('list() returns all invoices newest first', async () => {
     const db = new FakeDb(seedLeads());
     const svc = service(db);
-    svc.create({ requestId: 1, subtotalCents: 10000 });
-    svc.create({ requestId: 2, subtotalCents: 20000 });
-    const list = svc.list();
+    await svc.create({ requestId: 1, subtotalCents: 10000 });
+    await svc.create({ requestId: 2, subtotalCents: 20000 });
+    const list = await svc.list();
     expect(list.length).toBe(2);
     expect(list[0].invoice_number).toBe('HCSC-2026-000002');
   });
 
-  test('findPublicByNumber works and rejects unknown numbers', () => {
+  test('findPublicByNumber works and rejects unknown numbers', async () => {
     const db = new FakeDb(seedLeads());
     const svc = service(db);
-    const inv = svc.create({ requestId: 1, subtotalCents: 27500 });
-    expect(svc.findPublicByNumber('HCSC-2026-000001')?.id).toBe(inv.id);
-    expect(svc.findPublicByNumber('HCSC-1999-009999')).toBeNull();
+    const inv = await svc.create({ requestId: 1, subtotalCents: 27500 });
+    expect((await svc.findPublicByNumber('HCSC-2026-000001'))?.id).toBe(inv.id);
+    expect(await svc.findPublicByNumber('HCSC-1999-009999')).toBeNull();
   });
 });

@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_BASE_URL || 'https://hillcountryappliancerepair.com'),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_BASE_URL || 'https://www.hillcountrystumpco.com'),
   title: {
     default: "Hill Country Appliance Repair | Fredericksburg & Kerrville TX",
     template: "%s | Hill Country Appliance Repair"
@@ -34,7 +34,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "en_US",
-    url: "https://hillcountryappliancerepair.com/",
+    url: "https://www.hillcountrystumpco.com/",
     siteName: "Hill Country Appliance Repair",
     title: "Hill Country Appliance Repair | Fredericksburg & Kerrville TX",
     description: "Expert appliance repair services in Fredericksburg, Kerrville, and surrounding areas. Free service call with repair!",

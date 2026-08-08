@@ -20,6 +20,8 @@ import { ConfirmDialog } from '@/components/admin/lead/ConfirmDialog';
 import { invoiceTotals, canMarkInvoicePaid } from '@/lib/lead-workflow';
 import type { Lead, FinalInvoice, InvoicePaymentRow, PaymentMethod } from '@/lib/lead-workflow';
 
+const PAY_BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || 'https://www.hillcountrystumpco.com';
+
 const STATUS_LABEL: Record<string, string> = {
   draft: 'Draft',
   final_invoice_sent: 'Final Invoice Sent',
@@ -96,7 +98,7 @@ export function InvoicePanel({ lead, invoice, payments, onRefresh }: {
   }
 
   function copyLink(link: string) {
-    const url = `https://hillcountryappliancerepair.com${link}`;
+    const url = `${PAY_BASE_URL}${link}`;
     navigator.clipboard?.writeText(url).catch(() => undefined);
     setCopied(link);
     setTimeout(() => setCopied(null), 1600);
@@ -291,7 +293,7 @@ export function InvoicePanel({ lead, invoice, payments, onRefresh }: {
         {payLink && (
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
             <Link2 className="h-3.5 w-3.5 text-gray-400" />
-            <span className="font-mono text-gray-600">https://hillcountryappliancerepair.com{payLink}</span>
+            <span className="font-mono text-gray-600">{PAY_BASE_URL}{payLink}</span>
             <button type="button" onClick={() => copyLink(payLink)} className="inline-flex items-center gap-1 rounded-md bg-gray-100 px-2 py-1 font-medium text-gray-600 hover:bg-gray-200">
               {copied === payLink ? <CheckCircle2 className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
               {copied === payLink ? 'Copied' : 'Copy'}

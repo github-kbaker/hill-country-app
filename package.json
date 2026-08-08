@@ -10,10 +10,12 @@
     "typecheck": "tsc --noEmit",
     "test:regression": "node scripts/regression.mjs",
     "migrate:invoices": "bun scripts/migrate-invoices.ts",
+    "migrate:hosted": "bun scripts/migrate-hosted.ts",
     "test": "bun test tests/"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
+    "@libsql/client": "^0.17.4",
     "@stripe/stripe-js": "^9.5.0",
     "clsx": "^2.1.1",
     "framer-motion": "^12.38.0",

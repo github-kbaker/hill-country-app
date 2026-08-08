@@ -12,6 +12,11 @@
  * Email failures are never fatal: state persists, the notification row is
  * marked 'failed', and an admin can resend. Customer email is ALWAYS resolved
  * from the stored lead, never from request bodies.
+ *
+ * The injected DbClient.query may return rows directly OR a Promise of rows
+ * (the production adapter is async / @libsql), so every call is awaited —
+ * tests keep passing an in-memory FakeDb whose sync return values are simply
+ * awaited.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -23,7 +28,7 @@ export type PayoutStatus = 'on_hold' | 'released';
 export type InvoicePaymentProvider = 'stripe' | 'paypal' | 'manual';
 
 export interface DbClient {
-  query: (sql: string) => any;
+  query: (sql: string) => any | Promise<any>;
 }
 
 export interface InvoiceRow {
@@ -155,13 +160,13 @@ export class InvoiceService {
     return this.now().toISOString();
   }
 
-  private lastInsertId(): number | null {
-    const rows = this.db.query('SELECT last_insert_rowid() AS id');
+  private async lastInsertId(): Promise<number | null> {
+    const rows = await this.db.query('SELECT last_insert_rowid() AS id');
     return rows?.[0]?.id ?? null;
   }
 
-  private getInvoice(id: number): InvoiceRow {
-    const rows = this.db.query(`SELECT * FROM app_invoices WHERE id = ${id}`);
+  private async getInvoice(id: number): Promise<InvoiceRow> {
+    const rows = await this.db.query(`SELECT * FROM app_invoices WHERE id = ${id}`);
     if (!rows?.length) throw new Error(`Invoice ${id} not found`);
     return rows[0] as InvoiceRow;
   }
@@ -173,13 +178,13 @@ export class InvoiceService {
    * same request OR the same invoice_number, then insert the canonical number —
    * the projection can therefore never carry a divergent invoice number.
    */
-  private syncProjection(invoice: InvoiceRow, payLinkStripe?: string | null, payLinkPaypal?: string | null) {
+  private async syncProjection(invoice: InvoiceRow, payLinkStripe?: string | null, payLinkPaypal?: string | null): Promise<void> {
     try {
       if (invoice.request_id != null) {
-        this.db.query(`DELETE FROM app_final_invoices WHERE request_id = ${invoice.request_id}`);
+        await this.db.query(`DELETE FROM app_final_invoices WHERE request_id = ${invoice.request_id}`);
       }
-      this.db.query(`DELETE FROM app_final_invoices WHERE invoice_number = ${esc(invoice.invoice_number)}`);
-      this.db.query(
+      await this.db.query(`DELETE FROM app_final_invoices WHERE invoice_number = ${esc(invoice.invoice_number)}`);
+      await this.db.query(
         `INSERT INTO app_final_invoices (request_id, invoice_number, amount_cents, status, payment_methods, currency, issued_at, sent_at, due_date, pay_link_stripe, pay_link_paypal, notes, updated_at)
          VALUES (${esc(invoice.request_id)}, ${esc(invoice.invoice_number)}, ${invoice.total_cents}, ${esc(invoice.status)}, ${esc(invoice.payment_methods)}, ${esc(invoice.currency)}, ${esc(invoice.created_at)}, ${esc(invoice.sent_at)}, ${esc(invoice.due_date)}, ${esc(payLinkStripe ?? null)}, ${esc(payLinkPaypal ?? null)}, ${esc(`discount ${(invoice.discount_cents / 100).toFixed(2)}; paid ${(invoice.paid_cents / 100).toFixed(2)}; balance ${(invoice.balance_cents / 100).toFixed(2)}`)} , ${esc(this.iso())})`,
       );
@@ -188,9 +193,9 @@ export class InvoiceService {
     }
   }
 
-  private logEvent(invoiceId: number, eventKey: string, eventType: string, detail: string, provider?: string) {
+  private async logEvent(invoiceId: number, eventKey: string, eventType: string, detail: string, provider?: string): Promise<void> {
     try {
-      this.db.query(
+      await this.db.query(
         `INSERT INTO app_invoice_events (invoice_id, event_key, event_type, provider, detail, created_at)
          VALUES (${invoiceId}, ${esc(eventKey)}, ${esc(eventType)}, ${esc(provider ?? null)}, ${esc(detail)}, ${esc(this.iso())})`,
       );
@@ -209,7 +214,7 @@ export class InvoiceService {
     text: string,
   ): Promise<{ status: string; messageId?: string; error?: string }> {
     if (this.dryRun) {
-      this.db.query(
+      await this.db.query(
         `INSERT INTO app_invoice_notifications (invoice_id, type, recipient_email, subject, status, error, created_at)
          VALUES (${invoice.id}, ${esc(type)}, ${esc(recipientEmail)}, ${esc(subject)}, 'dry_run', NULL, ${esc(this.iso())})`,
       );
@@ -217,14 +222,14 @@ export class InvoiceService {
     }
     try {
       const result: SendResult = await sendEmail(this.transport, { from: undefined, to: recipientEmail, subject, html, text });
-      this.db.query(
+      await this.db.query(
         `INSERT INTO app_invoice_notifications (invoice_id, type, recipient_email, subject, status, message_id, error, created_at)
          VALUES (${invoice.id}, ${esc(type)}, ${esc(recipientEmail)}, ${esc(subject)}, 'sent', ${esc(result.messageId ?? null)}, NULL, ${esc(this.iso())})`,
       );
       return { status: 'sent', messageId: result.messageId };
     } catch (err) {
       const msg = (err as Error).message;
-      this.db.query(
+      await this.db.query(
         `INSERT INTO app_invoice_notifications (invoice_id, type, recipient_email, subject, status, error, created_at)
          VALUES (${invoice.id}, ${esc(type)}, ${esc(recipientEmail)}, ${esc(subject)}, 'failed', ${esc(msg)}, ${esc(this.iso())})`,
       );
@@ -239,48 +244,48 @@ export class InvoiceService {
     return resolved;
   }
 
-  private loadLead(requestId: number | null): { name?: string; email?: string } | null {
+  private async loadLead(requestId: number | null): Promise<{ name?: string; email?: string } | null> {
     if (!requestId) return null;
-    const rows = this.db.query(`SELECT name, email FROM app_repair_requests WHERE id = ${requestId}`);
+    const rows = await this.db.query(`SELECT name, email FROM app_repair_requests WHERE id = ${requestId}`);
     return rows?.[0] ?? null;
   }
 
   // -- lifecycle ------------------------------------------------------------
 
   /** Create a draft final invoice with computed totals + stable numbering. */
-  create(input: CreateInvoiceInput, idempotencyKey?: string): InvoiceRow {
+  async create(input: CreateInvoiceInput, idempotencyKey?: string): Promise<InvoiceRow> {
     const totals = calculateInvoiceTotals(input);
     const year = this.now().getFullYear();
-    const existing = (this.db.query('SELECT invoice_number FROM app_invoices') ?? []) as Array<{ invoice_number: string }>;
+    const existing = (await this.db.query('SELECT invoice_number FROM app_invoices') ?? []) as Array<{ invoice_number: string }>;
     const invoiceNumber = nextInvoiceNumber(existing.map((r) => r.invoice_number), year);
 
     const now = this.iso();
-    this.db.query(
+    await this.db.query(
       `INSERT INTO app_invoices (request_id, invoice_number, status, subtotal_cents, discount_cents, tax_cents, total_cents, paid_cents, balance_cents, currency, due_date, payment_methods, payout_status, discount_reason, customer_name, customer_email, created_at, updated_at)
        VALUES (${esc(input.requestId ?? null)}, ${esc(invoiceNumber)}, 'draft', ${totals.subtotalCents}, ${totals.discountCents}, ${totals.taxCents}, ${totals.totalCents}, 0, ${totals.totalCents}, 'USD', ${esc(input.dueDate ?? null)}, ${esc(input.paymentMethods ?? 'stripe,paypal,manual')}, 'on_hold', ${esc(input.discountReason ?? null)}, ${esc(input.customerName ?? null)}, ${esc(input.customerEmail ?? null)}, ${esc(now)}, ${esc(now)})`,
     );
-    const id = this.lastInsertId();
+    const id = await this.lastInsertId();
     if (!id) throw new Error('Failed to persist invoice');
-    this.logEvent(id, idempotencyKey ?? `invoice:created:${id}`, 'invoice_created', `Created ${invoiceNumber} (${(totals.totalCents / 100).toFixed(2)})`);
-    const created = this.getInvoice(id);
-    this.syncProjection(created);
+    await this.logEvent(id, idempotencyKey ?? `invoice:created:${id}`, 'invoice_created', `Created ${invoiceNumber} (${(totals.totalCents / 100).toFixed(2)})`);
+    const created = await this.getInvoice(id);
+    await this.syncProjection(created);
     return created;
   }
 
   /** Transition draft → final_invoice_sent and email the customer. */
   async send(invoiceId: number, opts?: { idempotencyKey?: string }): Promise<{ invoice: InvoiceRow; emailStatus: string }> {
-    const invoice = this.getInvoice(invoiceId);
+    const invoice = await this.getInvoice(invoiceId);
     if (invoice.status === 'invoice_paid' || invoice.status === 'cancelled') {
       throw new Error(`Cannot send invoice in status ${invoice.status}`);
     }
     if (invoice.status !== 'final_invoice_sent') {
-      this.db.query(
+      await this.db.query(
         `UPDATE app_invoices SET status = 'final_invoice_sent', sent_at = ${esc(this.iso())}, updated_at = ${esc(this.iso())} WHERE id = ${invoice.id}`,
       );
     }
-    this.logEvent(invoice.id, opts?.idempotencyKey ?? `invoice:sent:${invoice.id}`, 'invoice_sent', `Final invoice ${invoice.invoice_number} sent`);
+    await this.logEvent(invoice.id, opts?.idempotencyKey ?? `invoice:sent:${invoice.id}`, 'invoice_sent', `Final invoice ${invoice.invoice_number} sent`);
 
-    const lead = this.loadLead(invoice.request_id);
+    const lead = await this.loadLead(invoice.request_id);
     const recipient = this.resolveRecipientEmail(lead?.email, invoice.customer_email);
     const mail = renderFinalInvoiceEmail({
       customerName: lead?.name ?? invoice.customer_name ?? 'Customer',
@@ -292,8 +297,8 @@ export class InvoiceService {
       paymentLink: undefined,
     });
     const res = await this.notify(invoice, 'final_invoice', recipient, mail.subject, mail.html, mail.text);
-    const sent = this.getInvoice(invoice.id);
-    this.syncProjection(sent);
+    const sent = await this.getInvoice(invoice.id);
+    await this.syncProjection(sent);
     return { invoice: sent, emailStatus: res.status };
   }
 
@@ -305,36 +310,36 @@ export class InvoiceService {
    */
   async applyPayment(invoiceId: number, payment: NormalizedPayment, opts?: { note?: string }): Promise<{ invoice: InvoiceRow; payment: Record<string, unknown>; applied: boolean; receiptStatus?: string }> {
     const key = `${payment.provider}:${payment.providerEventId}`;
-    const existing = this.db.query(`SELECT id FROM app_invoice_payments WHERE provider_event_id = ${esc(key)}`);
+    const existing = await this.db.query(`SELECT id FROM app_invoice_payments WHERE provider_event_id = ${esc(key)}`);
     if (existing?.length) {
-      return { invoice: this.getInvoice(invoiceId), payment: existing[0], applied: false };
+      return { invoice: await this.getInvoice(invoiceId), payment: existing[0], applied: false };
     }
     if (payment.amountCents <= 0) throw new Error('Payment amount must be positive');
 
-    const invoice = this.getInvoice(invoiceId);
+    const invoice = await this.getInvoice(invoiceId);
     if (invoice.status === 'cancelled') throw new Error(`Cannot pay cancelled invoice ${invoice.invoice_number}`);
     const amount = Math.min(payment.amountCents, invoice.balance_cents);
     if (amount <= 0) throw new Error(`Invoice ${invoice.invoice_number} is already paid in full`);
 
     const now = this.iso();
-    this.db.query(
+    await this.db.query(
       `INSERT INTO app_invoice_payments (invoice_id, request_id, provider, provider_event_id, provider_reference, amount_cents, currency, status, payment_method, method, reference, customer_email, customer_name, note, ledger_confirmed, recorded_at, confirmed_at, created_at)
        VALUES (${invoice.id}, ${esc(invoice.request_id)}, ${esc(payment.provider)}, ${esc(key)}, ${esc(payment.providerReference ?? null)}, ${amount}, ${esc(payment.currency || 'USD')}, ${esc(payment.status)}, ${esc(payment.paymentMethod ?? null)}, ${esc(payment.paymentMethod ?? null)}, ${esc(payment.providerReference ?? null)}, ${esc(payment.customerEmail ?? null)}, ${esc(payment.customerName ?? null)}, ${esc(opts?.note ?? null)}, 1, ${esc(now)}, ${esc(now)}, ${esc(now)})`,
     );
-    const paymentId = this.lastInsertId();
+    const paymentId = await this.lastInsertId();
 
     const newPaid = invoice.paid_cents + amount;
     const newBalance = invoice.total_cents - newPaid;
     const isPaidInFull = newBalance <= 0;
     const nextStatus: InvoiceStatus = isPaidInFull ? 'invoice_paid' : invoice.status === 'draft' ? 'draft' : 'final_invoice_sent';
-    this.db.query(
+    await this.db.query(
       `UPDATE app_invoices SET paid_cents = ${newPaid}, balance_cents = ${Math.max(0, newBalance)}, status = ${esc(nextStatus)},
         paid_at = ${isPaidInFull ? esc(now) : 'paid_at'},
         payout_status = ${isPaidInFull ? "'released'" : 'payout_status'},
         updated_at = ${esc(now)} WHERE id = ${invoice.id}`,
     );
 
-    this.logEvent(
+    await this.logEvent(
       invoice.id,
       key,
       isPaidInFull ? 'invoice_paid' : 'payment_completed',
@@ -342,11 +347,11 @@ export class InvoiceService {
       payment.provider,
     );
     if (isPaidInFull) {
-      this.logEvent(invoice.id, `payout:released:${invoice.id}`, 'payout_released', `Payout released for ${invoice.invoice_number}`, payment.provider);
+      await this.logEvent(invoice.id, `payout:released:${invoice.id}`, 'payout_released', `Payout released for ${invoice.invoice_number}`, payment.provider);
     }
 
-    const updated = this.getInvoice(invoice.id);
-    const lead = this.loadLead(invoice.request_id);
+    const updated = await this.getInvoice(invoice.id);
+    const lead = await this.loadLead(invoice.request_id);
     const receipt = renderReceiptEmail({
       customerName: lead?.name ?? invoice.customer_name ?? 'Customer',
       invoiceNumber: updated.invoice_number,
@@ -362,15 +367,15 @@ export class InvoiceService {
       receipt.html,
       receipt.text,
     );
-    this.syncProjection(updated);
+    await this.syncProjection(updated);
     return { invoice: updated, payment: { id: paymentId, provider: payment.provider, amount_cents: amount }, applied: true, receiptStatus: receiptStatus.status };
   }
 
   /** Record a manual payment (check / cash / card over phone). */
   async recordManualPayment(input: { invoiceId: number; amountCents: number; method: string; reference?: string; note?: string; idempotencyKey?: string }): Promise<{ invoice: InvoiceRow; applied: boolean }> {
     const key = input.idempotencyKey ?? cryptoRandom();
-    const existing = this.db.query(`SELECT id FROM app_invoice_payments WHERE provider_event_id = ${esc(`manual:${key}`)}`);
-    if (existing?.length) return { invoice: this.getInvoice(input.invoiceId), applied: false };
+    const existing = await this.db.query(`SELECT id FROM app_invoice_payments WHERE provider_event_id = ${esc(`manual:${key}`)}`);
+    if (existing?.length) return { invoice: await this.getInvoice(input.invoiceId), applied: false };
     return this.applyPayment(input.invoiceId, {
       providerEventId: key,
       provider: 'manual',
@@ -383,39 +388,39 @@ export class InvoiceService {
   }
 
   /** Payout safeguard: refused until the invoice is paid in full unless forced. */
-  releasePayout(invoiceId: number, opts?: { force?: boolean; idempotencyKey?: string }): InvoiceRow {
-    const invoice = this.getInvoice(invoiceId);
+  async releasePayout(invoiceId: number, opts?: { force?: boolean; idempotencyKey?: string }): Promise<InvoiceRow> {
+    const invoice = await this.getInvoice(invoiceId);
     if (invoice.payout_status === 'released') return invoice;
     if (invoice.status !== 'invoice_paid' && !opts?.force) {
       throw new Error(`Payout for ${invoice.invoice_number} is held: invoice is not paid in full`);
     }
-    this.db.query(`UPDATE app_invoices SET payout_status = 'released', updated_at = ${esc(this.iso())} WHERE id = ${invoice.id}`);
-    this.logEvent(invoice.id, opts?.idempotencyKey ?? `payout:released:${invoice.id}`, 'payout_released', `Payout released for ${invoice.invoice_number}`);
-    const released = this.getInvoice(invoice.id);
-    this.syncProjection(released);
+    await this.db.query(`UPDATE app_invoices SET payout_status = 'released', updated_at = ${esc(this.iso())} WHERE id = ${invoice.id}`);
+    await this.logEvent(invoice.id, opts?.idempotencyKey ?? `payout:released:${invoice.id}`, 'payout_released', `Payout released for ${invoice.invoice_number}`);
+    const released = await this.getInvoice(invoice.id);
+    await this.syncProjection(released);
     return released;
   }
 
   // -- reads -----------------------------------------------------------------
 
-  list(): InvoiceRow[] {
-    return (this.db.query('SELECT * FROM app_invoices ORDER BY id DESC') ?? []) as InvoiceRow[];
+  async list(): Promise<InvoiceRow[]> {
+    return (await this.db.query('SELECT * FROM app_invoices ORDER BY id DESC') ?? []) as InvoiceRow[];
   }
 
-  get(invoiceId: number): InvoiceDetail {
-    const invoice = this.getInvoice(invoiceId);
+  async get(invoiceId: number): Promise<InvoiceDetail> {
+    const invoice = await this.getInvoice(invoiceId);
     return {
       ...invoice,
-      request: this.loadLead(invoice.request_id) as unknown as Record<string, unknown> | null,
-      payments: this.db.query(`SELECT * FROM app_invoice_payments WHERE invoice_id = ${invoiceId} ORDER BY id`) ?? [],
-      events: this.db.query(`SELECT * FROM app_invoice_events WHERE invoice_id = ${invoiceId} ORDER BY id`) ?? [],
-      notifications: this.db.query(`SELECT * FROM app_invoice_notifications WHERE invoice_id = ${invoiceId} ORDER BY id`) ?? [],
+      request: (await this.loadLead(invoice.request_id)) as unknown as Record<string, unknown> | null,
+      payments: (await this.db.query(`SELECT * FROM app_invoice_payments WHERE invoice_id = ${invoiceId} ORDER BY id`)) ?? [],
+      events: (await this.db.query(`SELECT * FROM app_invoice_events WHERE invoice_id = ${invoiceId} ORDER BY id`)) ?? [],
+      notifications: (await this.db.query(`SELECT * FROM app_invoice_notifications WHERE invoice_id = ${invoiceId} ORDER BY id`)) ?? [],
     };
   }
 
   /** For the payment page: invoice by number (public, safe subset). */
-  findPublicByNumber(invoiceNumber: string): InvoiceRow | null {
-    const rows = this.db.query(`SELECT * FROM app_invoices WHERE invoice_number = ${esc(invoiceNumber)}`);
+  async findPublicByNumber(invoiceNumber: string): Promise<InvoiceRow | null> {
+    const rows = await this.db.query(`SELECT * FROM app_invoices WHERE invoice_number = ${esc(invoiceNumber)}`);
     return rows?.[0] ?? null;
   }
 }
