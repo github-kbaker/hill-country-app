@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test:regression": "node scripts/regression.mjs"
+    "test:regression": "node scripts/regression.mjs",
+    "migrate:invoices": "bun scripts/migrate-invoices.ts",
+    "test": "bun test tests/"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
