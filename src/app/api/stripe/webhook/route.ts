@@ -2,13 +2,15 @@ import { NextResponse } from 'next/server';
 import { stripe } from '@/lib/stripe';
 import { headers } from 'next/headers';
 import { query, escape } from '@/lib/db';
+import { normalizeStripeEvent } from '@/lib/payments/stripe';
+import { InvoiceService } from '@/lib/invoice';
+
+export const runtime = 'nodejs';
 
 export async function POST(req: Request) {
   const body = await req.text();
   const signature = (await headers()).get('Stripe-Signature') as string;
-
   let event;
-
   try {
     event = stripe.webhooks.constructEvent(
       body,
@@ -19,22 +21,33 @@ export async function POST(req: Request) {
     console.error(`Webhook signature verification failed: ${err.message}`);
     return NextResponse.json({ error: 'Webhook Error' }, { status: 400 });
   }
-
   // Handle the event
   switch (event.type) {
-    case 'checkout.session.completed':
+    case 'checkout.session.completed': {
       const session = event.data.object as any;
-      console.log(`Payment successful for Invoice: ${session.metadata.invoiceNumber}`);
-      
+      console.log(`Payment successful for Invoice: ${session.metadata?.invoiceNumber}`);
+      // Legacy payment record — preserved unchanged.
       try {
-        query(`INSERT INTO app_payments (invoice_number, customer_name, customer_email, amount, currency, stripe_session_id, status) VALUES (${escape(session.metadata.invoiceNumber)}, ${escape(session.customer_details?.name)}, ${escape(session.customer_details?.email)}, ${session.amount_total}, ${escape(session.currency)}, ${escape(session.id)}, 'paid')`);
+        query(`INSERT INTO app_payments (invoice_number, customer_name, customer_email, amount, currency, stripe_session_id, status) VALUES (${escape(session.metadata?.invoiceNumber)}, ${escape(session.customer_details?.name)}, ${escape(session.customer_details?.email)}, ${session.amount_total}, ${escape(session.currency)}, ${escape(session.id)}, 'paid')`);
       } catch (dbError) {
-        console.error('Failed to persist payment:', dbError);
+        console.error('Failed to persist legacy payment:', dbError);
+      }
+      // Canonical invoice-ledger update — only when the session carries
+      // invoiceId metadata; idempotent (provider_event_id UNIQUE).
+      const normalized = normalizeStripeEvent(event);
+      if (normalized?.invoiceId) {
+        try {
+          const service = new InvoiceService({ db: { query } });
+          const result = await service.applyPayment(normalized.invoiceId, normalized);
+          console.log(`[stripe:webhook] ledger applied=${result.applied} invoice=${result.invoice.invoice_number} status=${result.invoice.status}`);
+        } catch (ledgerError) {
+          console.error('Failed to update invoice ledger:', ledgerError);
+        }
       }
       break;
+    }
     default:
       console.log(`Unhandled event type ${event.type}`);
   }
-
   return NextResponse.json({ received: true });
 }

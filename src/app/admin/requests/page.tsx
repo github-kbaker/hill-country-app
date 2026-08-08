@@ -2,11 +2,24 @@
 
 import React, { useEffect, useState } from 'react';
 import { Search, Filter, Download, MoreVertical, Eye, Loader2 } from 'lucide-react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
+interface RequestRow {
+  id: number;
+  name: string;
+  email: string;
+  phone?: string | null;
+  appliance_type?: string | null;
+  brand?: string | null;
+  model?: string | null;
+  created_at: string;
+  status: string;
+}
+
 export default function RequestsPage() {
-  const [requests, setRequests] = useState<any[]>([]);
+  const [requests, setRequests] = useState<RequestRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -20,7 +33,7 @@ export default function RequestsPage() {
   const filteredRequests = requests.filter(req => 
     req.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     req.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    req.appliance_type.toLowerCase().includes(searchTerm.toLowerCase())
+    (req.appliance_type ?? '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   if (loading) {
@@ -78,7 +91,7 @@ export default function RequestsPage() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filteredRequests.map((row) => (
-                <tr key={row.id} className="hover:bg-gray-50 transition-colors group">
+                <tr key={row.id} onClick={() => (window.location.href = `/admin/lead/${row.id}`)} className="hover:bg-gray-50 transition-colors group cursor-pointer">
                   <td className="px-6 py-4">
                     <div className="font-bold text-secondary text-black">{row.name}</div>
                     <div className="text-xs text-gray-400">{row.email}</div>
@@ -95,17 +108,18 @@ export default function RequestsPage() {
                     <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
                       row.status === 'completed' ? 'bg-green-100 text-green-700' :
                       row.status === 'scheduled' ? 'bg-blue-100 text-blue-700' :
+                      row.status === 'cancelled' ? 'bg-red-100 text-red-700' :
                       'bg-yellow-100 text-yellow-700'
                     }`}>
                       {row.status}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <div className="flex justify-end gap-2">
-                       <button className="p-2 text-gray-400 hover:text-primary transition-colors">
+                    <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                       <Link href={`/admin/lead/${row.id}`} className="p-2 text-gray-400 hover:text-primary transition-colors" aria-label={`View ${row.name}`}>
                           <Eye size={18} />
-                       </button>
-                       <button className="p-2 text-gray-400 hover:text-secondary transition-colors">
+                       </Link>
+                       <button className="p-2 text-gray-400 hover:text-secondary transition-colors" aria-label="More actions">
                           <MoreVertical size={18} />
                        </button>
                     </div>
