@@ -11,6 +11,7 @@
     "test:regression": "node scripts/regression.mjs",
     "migrate:invoices": "bun scripts/migrate-invoices.ts",
     "migrate:hosted": "bun scripts/migrate-hosted.ts",
+    "migrate:data": "bun scripts/migrate-data.ts",
     "test": "bun test tests/"
   },
   "dependencies": {
