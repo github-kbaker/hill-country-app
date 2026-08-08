@@ -82,7 +82,7 @@ describe('PayPal sandbox provider', () => {
     const order = await createPayPalOrder(CONFIG, {
       amountCents: 27500,
       invoiceId: 7,
-      invoiceNumber: 'HCAR-2026-0007',
+      invoiceNumber: 'HCSC-2026-000007',
       returnUrl: 'https://app.example.com/pay/success',
       cancelUrl: 'https://app.example.com/pay',
     }, impl as any);
@@ -93,7 +93,7 @@ describe('PayPal sandbox provider', () => {
     expect(body.intent).toBe('CAPTURE');
     expect(body.purchase_units[0].amount.value).toBe('275.00');
     expect(body.purchase_units[0].custom_id).toBe('7');
-    expect(body.purchase_units[0].invoice_id).toBe('HCAR-2026-0007');
+    expect(body.purchase_units[0].invoice_id).toBe('HCSC-2026-000007');
   });
 
   test('capturePayPalOrder extracts capture + custom_id', async () => {
@@ -233,7 +233,7 @@ describe('webhook event normalization', () => {
     const normalized = normalizeStripeEvent({
       id: 'evt_0001',
       type: 'checkout.session.completed',
-      data: { object: { id: 'cs_test_1', amount_total: 27500, currency: 'usd', customer_details: { email: 'mbaker789@gmail.com', name: 'Michonne' }, metadata: { invoiceId: '7', invoiceNumber: 'HCAR-2026-0007' } } },
+      data: { object: { id: 'cs_test_1', amount_total: 27500, currency: 'usd', customer_details: { email: 'mbaker789@gmail.com', name: 'Michonne' }, metadata: { invoiceId: '7', invoiceNumber: 'HCSC-2026-000007' } } },
     } as any);
     expect(normalized).not.toBeNull();
     expect(normalized!.provider).toBe('stripe');

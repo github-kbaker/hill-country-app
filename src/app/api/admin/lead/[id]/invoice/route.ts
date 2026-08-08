@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { query, escape } from '@/lib/db';
 import { isAdminRequest } from '@/lib/admin-auth';
+import { parseInvoiceNumber, formatInvoiceNumber } from '@/lib/invoice';
 import { createCustomerTransport, sendEmail, renderFinalInvoiceEmail, renderReceiptEmail } from '@/lib/email';
 import {
   invoiceTotals,
@@ -38,11 +39,21 @@ function getInvoicePayments(invoiceId: number): InvoicePaymentRow[] {
   return query(`SELECT * FROM app_invoice_payments WHERE invoice_id = ${invoiceId} ORDER BY id DESC`) as InvoicePaymentRow[];
 }
 
+/**
+ * Next invoice number in the canonical HCSC-YYYY-NNNNNN format.
+ * Derives the per-year sequence from BOTH the canonical ledger (app_invoices)
+ * and the projection (app_final_invoices) so every creation path advances the
+ * same sequence and the two tables can never diverge or duplicate numbers.
+ */
 function nextInvoiceNumber(): string {
   const year = new Date().getFullYear();
-  const rows = query(`SELECT COUNT(*) AS n FROM app_final_invoices`) as Array<{ n: number }>;
-  const n = (rows[0]?.n ?? 0) + 1;
-  return `INV-${year}-${String(n).padStart(3, '0')}`;
+  const canonical = query('SELECT invoice_number FROM app_invoices') as Array<{ invoice_number: string }>;
+  const projection = query('SELECT invoice_number FROM app_final_invoices') as Array<{ invoice_number: string }>;
+  const maxSeq = [...canonical, ...projection].reduce((max, row) => {
+    const parsed = parseInvoiceNumber(row.invoice_number);
+    return parsed && parsed.year === year && parsed.seq > max ? parsed.seq : max;
+  }, 0);
+  return formatInvoiceNumber(year, maxSeq + 1);
 }
 
 function logActivity(requestId: number, action: string, detail: string) {

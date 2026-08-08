@@ -27,7 +27,7 @@ invoice is paid in full (payout safeguard), then flip to `released`.
 | `src/app/api/admin/invoices/route.ts` | Authenticated: GET list/detail, POST create / send / add-payment / release-payout. |
 | `src/app/api/invoices/[id]/checkout/route.ts` | Customer-facing Stripe Checkout session (defaults to balance; custom partial amount allowed). |
 | `src/app/api/invoices/[id]/paypal/order/route.ts` | Customer-facing PayPal sandbox order. |
-| `src/app/api/invoices/lookup/route.ts` | Public-safe invoice lookup by `HCAR-YYYY-NNNN` (never leaks email/notes/events). |
+| `src/app/api/invoices/lookup/route.ts` | Public-safe invoice lookup by `HCSC-YYYY-NNNNNN` (never leaks email/notes/events). |
 | `src/app/api/paypal/webhook/route.ts` | Verifies PayPal transmission signature, then applies `PAYMENT.CAPTURE.COMPLETED` idempotently. |
 | `src/app/api/stripe/webhook/route.ts` | Legacy `app_payments` insert preserved; adds idempotent invoice-ledger update when `metadata.invoiceId` present. |
 | `scripts/migrate-invoices.ts` | Idempotent schema migration (safe to re-run). |
@@ -49,6 +49,19 @@ invoice is paid in full (payout safeguard), then flip to `released`.
   (`final_invoice` / `receipt` / `partial_receipt`; status sent|failed|dry_run).
 - `app_final_invoices` — frontend agent's UI projection table, kept in sync
   (backend-owned writes, keyed by invoice_number; never the source of truth).
+
+## Invoice numbering (single canonical sequence)
+
+Format: `HCSC-YYYY-NNNNNN` (6-digit per-year sequence, e.g. `HCSC-2026-000001`).
+Numbers are generated ONLY in `src/lib/invoice.ts` (`nextInvoiceNumber` /
+`formatInvoiceNumber`), derived from the canonical `app_invoices` ledger
+(`invoice_number` UNIQUE). The frontend projection (`app_final_invoices`) is
+synced with the canonical number and never generates its own; the lead-detail
+route's local generator was aligned to the same HCSC sequence (deriving from
+BOTH tables) so every creation path advances one shared sequence — the two
+tables cannot diverge or duplicate numbers. Legacy/foreign formats
+(`HCAR-…`, `INV-…`) are rejected by `parseInvoiceNumber` and cannot advance the
+sequence.
 
 ## Idempotency
 

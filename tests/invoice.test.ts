@@ -63,19 +63,22 @@ describe('calculateInvoiceTotals (currency-safe)', () => {
 
 describe('stable invoice numbering', () => {
   test('per-year sequence, zero-padded, never reused', () => {
-    expect(nextInvoiceNumber([], 2026)).toBe('HCAR-2026-0001');
-    expect(nextInvoiceNumber(['HCAR-2026-0001'], 2026)).toBe('HCAR-2026-0002');
-    expect(nextInvoiceNumber(['HCAR-2026-0001', 'HCAR-2026-0002'], 2026)).toBe('HCAR-2026-0003');
+    expect(nextInvoiceNumber([], 2026)).toBe('HCSC-2026-000001');
+    expect(nextInvoiceNumber(['HCSC-2026-000001'], 2026)).toBe('HCSC-2026-000002');
+    expect(nextInvoiceNumber(['HCSC-2026-000001', 'HCSC-2026-000002'], 2026)).toBe('HCSC-2026-000003');
   });
 
   test('separate sequence per year', () => {
-    expect(nextInvoiceNumber(['HCAR-2026-0042'], 2027)).toBe('HCAR-2027-0001');
+    expect(nextInvoiceNumber(['HCSC-2026-000042'], 2027)).toBe('HCSC-2027-000001');
   });
 
-  test('parse/format round-trip', () => {
-    expect(parseInvoiceNumber('HCAR-2026-0007')).toEqual({ year: 2026, seq: 7 });
+  test('parse/format round-trip; foreign/legacy formats cannot advance the HCSC sequence', () => {
+    expect(parseInvoiceNumber('HCSC-2026-000007')).toEqual({ year: 2026, seq: 7 });
     expect(parseInvoiceNumber('garbage')).toBeNull();
-    expect(formatInvoiceNumber(2026, 7)).toBe('HCAR-2026-0007');
+    expect(parseInvoiceNumber('HCAR-2026-0001')).toBeNull();
+    expect(parseInvoiceNumber('INV-2026-001')).toBeNull();
+    expect(parseInvoiceNumber('HCSC-2026-00001')).toBeNull(); // wrong width
+    expect(formatInvoiceNumber(2026, 7)).toBe('HCSC-2026-000007');
   });
 });
 
@@ -84,7 +87,7 @@ describe('InvoiceService — lifecycle', () => {
     const db = new FakeDb(seedLeads());
     const svc = service(db);
     const inv = svc.create({ requestId: 1, subtotalCents: 35000, discountCents: 7500, discountReason: 'Returning customer', dueDate: '2026-08-15' });
-    expect(inv.invoice_number).toBe('HCAR-2026-0001');
+    expect(inv.invoice_number).toBe('HCSC-2026-000001');
     expect(inv.status).toBe('draft');
     expect(inv.total_cents).toBe(27500);
     expect(inv.balance_cents).toBe(27500);
@@ -93,16 +96,22 @@ describe('InvoiceService — lifecycle', () => {
     // Frontend projection table is kept in sync.
     const projection = db.tables['app_final_invoices'];
     expect(projection.length).toBe(1);
-    expect(projection[0].invoice_number).toBe('HCAR-2026-0001');
+    expect(projection[0].invoice_number).toBe('HCSC-2026-000001');
     expect(projection[0].amount_cents).toBe(27500);
   });
 
-  test('sequential creates get sequential numbers', () => {
+  test('sequential creates get sequential numbers; canonical ledger and projection NEVER diverge', () => {
     const db = new FakeDb(seedLeads());
     const svc = service(db);
     svc.create({ requestId: 1, subtotalCents: 10000 });
     const second = svc.create({ requestId: 2, subtotalCents: 20000 });
-    expect(second.invoice_number).toBe('HCAR-2026-0002');
+    expect(second.invoice_number).toBe('HCSC-2026-000002');
+    // Divergence guard: the projection must mirror the canonical ledger exactly
+    // (same numbers, same count) — numbers are only generated on app_invoices.
+    const canonical = db.tables['app_invoices'].map((r) => r.invoice_number).sort();
+    const projection = db.tables['app_final_invoices'].map((r) => r.invoice_number).sort();
+    expect(projection).toEqual(canonical);
+    expect(projection.every((n) => /^HCSC-\d{4}-\d{6}$/.test(n))).toBe(true);
   });
 
   test('send → final_invoice_sent; customer email resolved from LEAD only (Michonne QA)', async () => {
@@ -117,7 +126,7 @@ describe('InvoiceService — lifecycle', () => {
     expect(result.invoice.sent_at).toBeTruthy();
     expect(sent.length).toBe(1);
     expect(sent[0].to).toBe('mbaker789@gmail.com');
-    expect(sent[0].subject).toContain('HCAR-2026-0001');
+    expect(sent[0].subject).toContain('HCSC-2026-000001');
     expect(sent[0].html).toContain('$275.00');
     const notifs = db.tables['app_invoice_notifications'];
     expect(notifs.length).toBe(1);
@@ -316,14 +325,14 @@ describe('InvoiceService — payments, idempotency, payout safeguard', () => {
     svc.create({ requestId: 2, subtotalCents: 20000 });
     const list = svc.list();
     expect(list.length).toBe(2);
-    expect(list[0].invoice_number).toBe('HCAR-2026-0002');
+    expect(list[0].invoice_number).toBe('HCSC-2026-000002');
   });
 
   test('findPublicByNumber works and rejects unknown numbers', () => {
     const db = new FakeDb(seedLeads());
     const svc = service(db);
     const inv = svc.create({ requestId: 1, subtotalCents: 27500 });
-    expect(svc.findPublicByNumber('HCAR-2026-0001')?.id).toBe(inv.id);
-    expect(svc.findPublicByNumber('HCAR-1999-9999')).toBeNull();
+    expect(svc.findPublicByNumber('HCSC-2026-000001')?.id).toBe(inv.id);
+    expect(svc.findPublicByNumber('HCSC-1999-009999')).toBeNull();
   });
 });

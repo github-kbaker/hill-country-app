@@ -5,14 +5,14 @@ import { query } from '@/lib/db';
 export const runtime = 'nodejs';
 
 /**
- * GET /api/invoices/lookup?invoiceNumber=HCAR-YYYY-NNNN
+ * GET /api/invoices/lookup?invoiceNumber=HCSC-YYYY-NNNNNN
  * Public-safe lookup for the pay page: returns only display fields and the
  * canonical balance. Never leaks customer email, notes, or events.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const invoiceNumber = (url.searchParams.get('invoiceNumber') ?? '').trim().toUpperCase();
-  if (!/^HCAR-\d{4}-\d{4}$/.test(invoiceNumber)) {
+  if (!/^HCSC-\d{4}-\d{6}$/.test(invoiceNumber)) {
     return NextResponse.json({ error: 'Invalid invoice number format' }, { status: 400 });
   }
   try {

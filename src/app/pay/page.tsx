@@ -78,7 +78,7 @@ export default function PayInvoicePage() {
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
           <div className="space-y-2">
             <label className="text-sm font-medium">Invoice Number</label>
-            <Input {...register('invoiceNumber')} placeholder="e.g. INV-12345" />
+            <Input {...register('invoiceNumber')} placeholder="e.g. HCSC-2026-000001" />
             {errors.invoiceNumber && <p className="text-xs text-red-500">{errors.invoiceNumber.message}</p>}
           </div>
 

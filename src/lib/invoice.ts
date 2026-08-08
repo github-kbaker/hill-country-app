@@ -105,15 +105,19 @@ export function calculateInvoiceTotals(input: { subtotalCents: number; discountC
 }
 
 // ---------------------------------------------------------------------------
-// Stable invoice numbering: HCAR-YYYY-NNNN, per-year, never reused
+// Stable invoice numbering: HCSC-YYYY-NNNNNN (6-digit per-year sequence),
+// never reused. Single source of truth: numbers are generated ONLY here, from
+// the canonical app_invoices ledger (UNIQUE constraint on invoice_number).
+// The frontend projection (app_final_invoices) never generates numbers — it is
+// synced with the canonical number, so the two can never diverge.
 // ---------------------------------------------------------------------------
 
 export function formatInvoiceNumber(year: number, seq: number): string {
-  return `HCAR-${year}-${String(seq).padStart(4, '0')}`;
+  return `HCSC-${year}-${String(seq).padStart(6, '0')}`;
 }
 
 export function parseInvoiceNumber(invoiceNumber: string): { year: number; seq: number } | null {
-  const m = /^HCAR-(\d{4})-(\d{4})$/.exec(invoiceNumber.trim());
+  const m = /^HCSC-(\d{4})-(\d{6})$/.exec(invoiceNumber.trim());
   if (!m) return null;
   return { year: Number(m[1]), seq: Number(m[2]) };
 }
@@ -164,11 +168,16 @@ export class InvoiceService {
 
   /**
    * Sync the frontend agent's UI projection table (app_final_invoices) so the
-   * existing invoice screens keep working off the canonical ledger. Keyed by
-   * invoice_number; never the source of truth, always overwritten.
+   * existing invoice screens keep working off the canonical ledger. Always
+   * overwritten from the canonical row: we clear any projection rows for the
+   * same request OR the same invoice_number, then insert the canonical number —
+   * the projection can therefore never carry a divergent invoice number.
    */
   private syncProjection(invoice: InvoiceRow, payLinkStripe?: string | null, payLinkPaypal?: string | null) {
     try {
+      if (invoice.request_id != null) {
+        this.db.query(`DELETE FROM app_final_invoices WHERE request_id = ${invoice.request_id}`);
+      }
       this.db.query(`DELETE FROM app_final_invoices WHERE invoice_number = ${esc(invoice.invoice_number)}`);
       this.db.query(
         `INSERT INTO app_final_invoices (request_id, invoice_number, amount_cents, status, payment_methods, currency, issued_at, sent_at, due_date, pay_link_stripe, pay_link_paypal, notes, updated_at)

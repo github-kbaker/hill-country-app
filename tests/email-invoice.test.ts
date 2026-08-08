@@ -16,7 +16,7 @@ afterEach(() => {
 describe('invoice email renderers (branded green/black/white)', () => {
   const base = {
     customerName: 'Michonne',
-    invoiceNumber: 'HCAR-2026-0001',
+    invoiceNumber: 'HCSC-2026-000001',
     totalCents: 35000,
     paidCents: 7500,
     balanceCents: 27500,
@@ -25,7 +25,7 @@ describe('invoice email renderers (branded green/black/white)', () => {
 
   test('final invoice shows number, total, paid, and balance in $', () => {
     const mail = renderFinalInvoiceEmail(base);
-    expect(mail.subject).toContain('HCAR-2026-0001');
+    expect(mail.subject).toContain('HCSC-2026-000001');
     expect(mail.html).toContain('$350.00');
     expect(mail.html).toContain('$275.00');
     expect(mail.html).toContain('#2e7d32'); // brand green
